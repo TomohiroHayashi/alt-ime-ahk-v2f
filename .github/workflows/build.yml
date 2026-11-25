@@ -48,8 +48,14 @@ jobs:
           $src = Get-Content alt-ime-ahk-v2f.ahk -Raw -Encoding utf8
           if ($src -notmatch 'SendEvent\(') { throw 'alt-ime-ahk-v2f.ahk no longer uses SendEvent(); update this control step.' }
           Set-Content "$dir\alt-ime-ahk-v2f.ahk" ($src -replace 'SendEvent\(', 'Send(') -Encoding utf8NoBOM -NoNewline
-          powershell -NoProfile -ExecutionPolicy Bypass -File tests\Test-AltStuck.ps1 -AhkExe $env:AHK_EXE -Script "$dir\alt-ime-ahk-v2f.ahk" -Keys LAlt
-          if ($LASTEXITCODE -ne 1) { throw "Expected the unfixed script to fail (exit 1), got exit $LASTEXITCODE." }
+          # The bug reproduces far less often on the runner than on a desktop PC
+          # (about 1 in 200 taps), so tap until the first stuck key, up to 3000 taps.
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\Test-AltStuck.ps1 -AhkExe $env:AHK_EXE -Script "$dir\alt-ime-ahk-v2f.ahk" -Keys LAlt -Taps 3000 -StopOnFirstStuck |
+            Tee-Object -Variable out
+          # Exit 1 alone could also be a parameter error, so also require a reported stuck tap.
+          if ($LASTEXITCODE -ne 1 -or -not ($out -match '^LAlt: [1-9]\d* of')) {
+            throw "Expected the unfixed script to leave LAlt stuck (exit 1), got exit $LASTEXITCODE."
+          }
           exit 0
 
       - name: Test script

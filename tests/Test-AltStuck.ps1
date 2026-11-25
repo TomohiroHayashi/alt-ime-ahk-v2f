@@ -32,6 +32,11 @@
 .PARAMETER Keys
     Which keys to test: LAlt, RAlt or both.
 
+.PARAMETER StopOnFirstStuck
+    Stop a key's taps at the first stuck key. With a large -Taps, this checks
+    that the test can detect the bug at all (expected to fail) without always
+    paying for every tap.
+
 .EXAMPLE
     .\tests\Test-AltStuck.ps1 -AhkExe C:\Tools\AutoHotkey\AutoHotkey64.exe
 
@@ -42,9 +47,10 @@
 [CmdletBinding()]
 param(
     [string]$AhkExe,
-    [string]$Script = (Join-Path (Split-Path -Parent $PSScriptRoot) 'alt-ime-ahk-v2f.ahk'),
+    [string]$Script,
     [ValidateRange(1, 10000)][int]$Taps = 200,
-    [ValidateSet('LAlt', 'RAlt')][string[]]$Keys = @('LAlt', 'RAlt')
+    [ValidateSet('LAlt', 'RAlt')][string[]]$Keys = @('LAlt', 'RAlt'),
+    [switch]$StopOnFirstStuck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,7 +89,7 @@ public static class AltTap {
     }
 
     // Returns the gaps (in microseconds) of the taps that left the key stuck.
-    public static double[] Run(byte vk, byte sc, int taps, int settleMs, int seed) {
+    public static double[] Run(byte vk, byte sc, int taps, int settleMs, int seed, bool stopOnFirstStuck) {
         var rnd = new Random(seed);
         var stuck = new System.Collections.Generic.List<double>();
         for (int i = 0; i < taps; i++) {
@@ -96,6 +102,7 @@ public static class AltTap {
             if (IsDown(vk)) {
                 stuck.Add(gapUs);
                 Release(vk, sc);
+                if (stopOnFirstStuck) break;
             }
         }
         return stuck.ToArray();
@@ -108,6 +115,9 @@ $keyInfo = @{
     RAlt = @{ Vk = [byte]0xA5; Sc = [byte]0x38 }
 }
 
+# Resolved here, not as a param default: Windows PowerShell leaves $PSScriptRoot
+# empty in param defaults under -File.
+if (-not $Script) { $Script = Join-Path (Split-Path -Parent $PSScriptRoot) 'alt-ime-ahk-v2f.ahk' }
 $Script = (Resolve-Path $Script).Path
 if ($Script -like '*.exe') {
     $exe = $Script; $arguments = @()
@@ -143,7 +153,7 @@ try {
     if ($proc.HasExited) { Write-Error "The script exited early (exit code $($proc.ExitCode))."; exit 2 }
 
     foreach ($k in $Keys) {
-        $stuck = [AltTap]::Run($keyInfo[$k].Vk, $keyInfo[$k].Sc, $Taps, 300, 12345)
+        $stuck = [AltTap]::Run($keyInfo[$k].Vk, $keyInfo[$k].Sc, $Taps, 300, 12345, $StopOnFirstStuck.IsPresent)
         $color = if ($stuck.Count) { 'Red' } else { 'Green' }
         Write-Host ("{0}: {1} of {2} taps left the key stuck" -f $k, $stuck.Count, $Taps) -ForegroundColor $color
         if ($stuck.Count) {
