@@ -48,6 +48,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Any unexpected error means the test did not run; never let it look like a pass.
+trap { Write-Host "Test error: $_" -ForegroundColor Red; exit 2 }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -68,6 +70,16 @@ public static class AltTap {
     public static void Release(byte vk, byte sc) {
         keybd_event(vk, sc, Ext(vk) | KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(100);
+    }
+
+    // True when injected input reaches the key state at all. Without an interactive
+    // desktop nothing ever sticks, so the test would pass without testing anything.
+    public static bool InjectionWorks(byte vk, byte sc) {
+        keybd_event(vk, sc, Ext(vk), UIntPtr.Zero);
+        Thread.Sleep(100);
+        bool down = IsDown(vk);
+        Release(vk, sc);
+        return down && !IsDown(vk);
     }
 
     // Returns the gaps (in microseconds) of the taps that left the key stuck.
@@ -115,10 +127,16 @@ if ($others) {
 
 foreach ($k in $Keys) {
     if ([AltTap]::IsDown($keyInfo[$k].Vk)) { [AltTap]::Release($keyInfo[$k].Vk, $keyInfo[$k].Sc) }
+    if (-not [AltTap]::InjectionWorks($keyInfo[$k].Vk, $keyInfo[$k].Sc)) {
+        Write-Host "Injected $k input does not reach the key state (no interactive desktop?). Cannot test." -ForegroundColor Red
+        exit 2
+    }
 }
 
 Write-Host "Testing: $Script"
-$proc = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+$startArgs = @{ FilePath = $exe; PassThru = $true }
+if ($arguments) { $startArgs.ArgumentList = $arguments }
+$proc = Start-Process @startArgs
 $failed = $false
 try {
     Start-Sleep -Seconds 2 # let the script install its keyboard hook
