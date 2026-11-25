@@ -1,8 +1,10 @@
 name: build
 
 on:
+  # fork-main is this fork's integration branch; master mirrors upstream.
+  # Topic branches are covered by pull_request, so they do not run twice.
   push:
-    branches: ['**']
+    branches: [fork-main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:

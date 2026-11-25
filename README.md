@@ -39,7 +39,7 @@ Releases から alt-ime-ahk-v2f.zip をダウンロード後、好きな場所�
 * 終了コードは、成功が 0、失敗が 1、実行できなかったときが 2 です。
 * コンパイル済みの exe を試すときは、`-Script` に exe のパスを渡します（`-AhkExe` は不要）。
 
-GitHub Actions（`.github/workflows/build.yml`）は、push のたびにこのテストを実行し、exe をビルドします。`v` で始まるタグ（例: `v1.0.2`）を push すると、exe とソース一式を入れた alt-ime-ahk-v2f.zip を添付したリリースを作ります。
+GitHub Actions（`.github/workflows/build.yml`）は、fork-main への push と PR のたびにこのテストを実行し、exe をビルドします。`v` で始まるタグ（例: `v1.0.2`）を push すると、exe とソース一式を入れた alt-ime-ahk-v2f.zip を添付したリリースを作ります。
 
 ## 参考
 
