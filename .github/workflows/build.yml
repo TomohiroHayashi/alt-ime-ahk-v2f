@@ -1,0 +1,109 @@
+name: build
+
+on:
+  # fork-main is this fork's integration branch; master mirrors upstream.
+  # Topic branches are covered by pull_request, so they do not run twice.
+  push:
+    branches: [fork-main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned tool versions; the SHA-256 values are the ones published with each release.
+  AHK_VERSION: 2.0.32
+  AHK_SHA256: 384a4c125e8d7b5b77ddbd5a593ec761d3e9e96e97a95931cf56e9a077fda114
+  AHK2EXE_TAG: Ahk2Exe1.1.37.02a2
+  AHK2EXE_SHA256: c29b8c3a5124850d79fc9e66e2ca79677c377d7f31631ad3022ba159c5d9e3be
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download AutoHotkey and Ahk2Exe
+        shell: pwsh
+        run: |
+          function Get-Verified([string]$Url, [string]$Sha256, [string]$Dest) {
+            $zip = "$env:RUNNER_TEMP\$(Split-Path $Url -Leaf)"
+            Invoke-WebRequest -Uri $Url -OutFile $zip
+            $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
+            if ($actual -ne $Sha256) { throw "SHA-256 mismatch for $Url`: $actual" }
+            Expand-Archive $zip -DestinationPath $Dest -Force
+          }
+          Get-Verified "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$env:AHK_VERSION/AutoHotkey_$env:AHK_VERSION.zip" $env:AHK_SHA256 "$env:RUNNER_TEMP\ahk"
+          Get-Verified "https://github.com/AutoHotkey/Ahk2Exe/releases/download/$env:AHK2EXE_TAG/$env:AHK2EXE_TAG.zip" $env:AHK2EXE_SHA256 "$env:RUNNER_TEMP\ahk2exe"
+          "AHK_EXE=$env:RUNNER_TEMP\ahk\AutoHotkey64.exe" >> $env:GITHUB_ENV
+          "AHK2EXE=$env:RUNNER_TEMP\ahk2exe\Ahk2Exe.exe" >> $env:GITHUB_ENV
+
+      # Guards against a test that passes without testing anything: with the fix
+      # reverted (SendEvent -> Send), the test must detect a stuck Alt key.
+      - name: Test detects the bug (fix reverted)
+        shell: pwsh
+        run: |
+          $dir = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\control"
+          Copy-Item IMEv2.ahk $dir
+          $src = Get-Content alt-ime-ahk-v2f.ahk -Raw -Encoding utf8
+          if ($src -notmatch 'SendEvent\(') { throw 'alt-ime-ahk-v2f.ahk no longer uses SendEvent(); update this control step.' }
+          Set-Content "$dir\alt-ime-ahk-v2f.ahk" ($src -replace 'SendEvent\(', 'Send(') -Encoding utf8NoBOM -NoNewline
+          # The bug reproduces far less often on the runner than on a desktop PC
+          # (about 1 in 200 taps), so tap until the first stuck key, up to 3000 taps.
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\Test-AltStuck.ps1 -AhkExe $env:AHK_EXE -Script "$dir\alt-ime-ahk-v2f.ahk" -Keys LAlt -Taps 3000 -StopOnFirstStuck |
+            Tee-Object -Variable out
+          # Exit 1 alone could also be a parameter error, so also require a reported stuck tap.
+          if ($LASTEXITCODE -ne 1 -or -not ($out -match '^LAlt: [1-9]\d* of')) {
+            throw "Expected the unfixed script to leave LAlt stuck (exit 1), got exit $LASTEXITCODE."
+          }
+          exit 0
+
+      - name: Test script
+        shell: powershell
+        run: .\tests\Test-AltStuck.ps1 -AhkExe $env:AHK_EXE
+
+      - name: Compile exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\pkg | Out-Null
+          $out = "$PWD\dist\pkg\alt-ime-ahk-v2f.exe"
+          $p = Start-Process -FilePath $env:AHK2EXE -Wait -PassThru -NoNewWindow -ArgumentList @(
+            '/in', "`"$PWD\alt-ime-ahk-v2f.ahk`"", '/out', "`"$out`"", '/base', "`"$env:AHK_EXE`"", '/silent', 'verbose')
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $out)) { throw "Ahk2Exe failed (exit $($p.ExitCode))." }
+
+      - name: Test compiled exe
+        shell: powershell
+        run: .\tests\Test-AltStuck.ps1 -Script dist\pkg\alt-ime-ahk-v2f.exe
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          # Same layout as the original release zip.
+          Copy-Item alt-ime-ahk-v2f.ahk, IMEv2.ahk, LICENSE, README.md dist\pkg
+          Compress-Archive -Path dist\pkg\* -DestinationPath dist\alt-ime-ahk-v2f.zip -Force
+          Get-FileHash dist\alt-ime-ahk-v2f.zip -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alt-ime-ahk-v2f
+          path: dist/alt-ime-ahk-v2f.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alt-ime-ahk-v2f
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" alt-ime-ahk-v2f.zip
+          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
