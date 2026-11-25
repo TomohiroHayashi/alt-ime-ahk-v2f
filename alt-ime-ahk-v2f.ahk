@@ -147,17 +147,19 @@ GitHubRepoReadme(A_ThisMenuItem, A_ThisMenuItemPos, MyMenu)
 
 ; 左 Alt 空打ちで IME を OFF
 ; Chrome のメニューフォーカス対策: AHK が Alt を所有し、単独 Alt を Chrome に渡さない
+; Send() (SendInput) ではなく SendEvent() を使う。SendInput の間は AHK がキーボードフックを外すので、
+; その隙に Alt を離すと AHK が離鍵を取りこぼし、Alt が押されたままになる (tests\Test-AltStuck.ps1)
 #HotIf !WinActive("ahk_exe mstsc.exe")
 *LAlt::
 {
     SetKeyDelay(-1)
-    Send("{Blind}{LAlt DownR}{F13}")
+    SendEvent("{Blind}{LAlt DownR}{F13}")
     KeyWait("LAlt")
 }
 ~*LAlt up::
 {
     SetKeyDelay(-1)
-    Send("{Blind}{LAlt Up}")
+    SendEvent("{Blind}{LAlt Up}")
     if (A_PriorHotkey = "*LAlt") {
         IME_SET(0)
     }
@@ -166,17 +168,18 @@ GitHubRepoReadme(A_ThisMenuItem, A_ThisMenuItemPos, MyMenu)
 
 ; 右 Alt 空打ちで IME を ON
 ; Chrome のメニューフォーカス対策: AHK が Alt を所有し、単独 Alt を Chrome に渡さない
+; SendEvent() を使う理由は左 Alt と同じ
 #HotIf !WinActive("ahk_exe mstsc.exe")
 *RAlt::
 {
     SetKeyDelay(-1)
-    Send("{Blind}{RAlt DownR}{F13}")
+    SendEvent("{Blind}{RAlt DownR}{F13}")
     KeyWait("RAlt")
 }
 ~*RAlt up::
 {
     SetKeyDelay(-1)
-    Send("{Blind}{RAlt Up}")
+    SendEvent("{Blind}{RAlt Up}")
     if (A_PriorHotkey = "*RAlt") {
         IME_SET(1)
     }
